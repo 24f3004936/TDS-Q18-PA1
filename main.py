@@ -343,12 +343,18 @@ async def cache_main(req: CacheReq):
     STATS["totalRequests"] += 1
     cache_cleanup()
 
+    def latency_ms():
+        return max(1, int((time.perf_counter() - t0) * 1000))
+
     key = md5(req.query)
+
+    # exact hit
     if key in CACHE:
         STATS["cacheHits"] += 1
         CACHE.move_to_end(key)
-        return {"answer": CACHE[key].ans, "cached": True, "latency": int((time.perf_counter()-t0)*1000), "cacheKey": key}
+        return {"answer": CACHE[key].ans, "cached": True, "latency": latency_ms(), "cacheKey": key}
 
+    # semantic hit
     q_emb = (await embed_many([req.query]))[0]
     best_k, best_sim = None, -1.0
     for k, v in CACHE.items():
@@ -359,14 +365,15 @@ async def cache_main(req: CacheReq):
     if best_k and best_sim >= SEM_CACHE_THRESHOLD:
         STATS["cacheHits"] += 1
         CACHE.move_to_end(best_k)
-        return {"answer": CACHE[best_k].ans, "cached": True, "latency": int((time.perf_counter()-t0)*1000), "cacheKey": best_k}
+        return {"answer": CACHE[best_k].ans, "cached": True, "latency": latency_ms(), "cacheKey": best_k}
 
+    # miss
     STATS["cacheMisses"] += 1
     ans = await faq_answer(req.query)
     CACHE[key] = CacheEntry(ans, q_emb)
     CACHE.move_to_end(key)
     cache_evict()
-    return {"answer": ans, "cached": False, "latency": int((time.perf_counter()-t0)*1000), "cacheKey": key}
+    return {"answer": ans, "cached": False, "latency": latency_ms(), "cacheKey": key}
 
 @app.get("/analytics")
 async def analytics():
